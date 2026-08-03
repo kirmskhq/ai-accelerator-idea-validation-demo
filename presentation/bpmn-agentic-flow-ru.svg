@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="700" viewBox="0 0 680 700">
+<style>
+text{font-family:'Segoe UI',Arial,sans-serif}
+.t{font-size:14px;fill:#2C2C2A}
+.ts{font-size:12px;fill:#5F5E5A}
+.gray{fill:#F1EFE8;stroke:#888780;stroke-width:1}
+.purple{fill:#EEEDFE;stroke:#7F77DD;stroke-width:1}
+.teal{fill:#E1F5EE;stroke:#1D9E75;stroke-width:1}
+.amber{fill:#FAEEDA;stroke:#EF9F27;stroke-width:1}
+.ln{stroke:#5F5E5A;stroke-width:1.5;fill:none}
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5F5E5A"/></marker></defs>
+<rect x="0" y="0" width="680" height="700" fill="#FFFFFF"/>
+
+<rect class="gray" x="120" y="21" width="10" height="10" rx="2"/>
+<text class="ts" x="136" y="30">человек</text>
+<rect class="purple" x="200" y="21" width="10" height="10" rx="2"/>
+<text class="ts" x="216" y="30">агент</text>
+<rect class="teal" x="266" y="21" width="10" height="10" rx="2"/>
+<text class="ts" x="282" y="30">код</text>
+<rect class="amber" x="318" y="21" width="10" height="10" rx="2"/>
+<text class="ts" x="334" y="30">шлюз</text>
+
+<circle class="gray" cx="250" cy="80" r="18"/>
+<text class="t" x="282" y="85">Человек пришёл с идеей</text>
+<line class="ln" x1="250" y1="98" x2="250" y2="120" marker-end="url(#ah)"/>
+
+<rect class="purple" x="120" y="124" width="260" height="44" rx="8"/>
+<text class="t" x="250" y="151" text-anchor="middle">Вопрос по текущей теме</text>
+<text class="ts" x="400" y="141">Один вопрос за реплику,</text>
+<text class="ts" x="400" y="157">строго по одной теме</text>
+<line class="ln" x1="250" y1="168" x2="250" y2="190" marker-end="url(#ah)"/>
+
+<rect class="gray" x="120" y="194" width="260" height="44" rx="8"/>
+<text class="t" x="250" y="221" text-anchor="middle">Человек отвечает</text>
+<text class="ts" x="400" y="211">Историю диалога держит агент,</text>
+<text class="ts" x="400" y="227">узлы состояния не нужны</text>
+<line class="ln" x1="250" y1="238" x2="250" y2="260" marker-end="url(#ah)"/>
+
+<path class="amber" d="M250,264 L276,290 L250,316 L224,290 Z"/>
+<text class="t" x="292" y="284">Тема закрыта или две попытки?</text>
+<text class="ts" x="292" y="302">Слабый ответ — ещё один заход</text>
+<text class="ts" x="218" y="283" text-anchor="end">нет</text>
+<text class="ts" x="258" y="333">да</text>
+<line class="ln" x1="250" y1="316" x2="250" y2="338" marker-end="url(#ah)"/>
+<path class="ln" d="M224,290 L76,290 L76,140 L116,140" marker-end="url(#ah)"/>
+
+<path class="amber" d="M250,342 L276,368 L250,394 L224,368 Z"/>
+<text class="t" x="292" y="362">Все четыре темы пройдены?</text>
+<text class="ts" x="292" y="380">Рамка тем и бюджет вопросов</text>
+<text class="ts" x="218" y="361" text-anchor="end">нет</text>
+<text class="ts" x="258" y="411">да</text>
+<line class="ln" x1="250" y1="394" x2="250" y2="416" marker-end="url(#ah)"/>
+<path class="ln" d="M224,368 L52,368 L52,156 L116,156" marker-end="url(#ah)"/>
+
+<rect class="teal" x="120" y="420" width="260" height="44" rx="8"/>
+<text class="t" x="250" y="447" text-anchor="middle">Поиск аналогов в вебе</text>
+<text class="ts" x="400" y="437">Живые ссылки из поиска,</text>
+<text class="ts" x="400" y="453">а не выдуманные моделью</text>
+<line class="ln" x1="250" y1="464" x2="250" y2="486" marker-end="url(#ah)"/>
+
+<rect class="teal" x="120" y="490" width="260" height="44" rx="8"/>
+<text class="t" x="250" y="517" text-anchor="middle">Вердикт R1–R5 в коде</text>
+<text class="ts" x="400" y="507">Правила считает код —</text>
+<text class="ts" x="400" y="523">результат воспроизводим</text>
+<line class="ln" x1="250" y1="534" x2="250" y2="556" marker-end="url(#ah)"/>
+
+<rect class="purple" x="120" y="560" width="260" height="44" rx="8"/>
+<text class="t" x="250" y="587" text-anchor="middle">Агент объясняет вердикт</text>
+<text class="ts" x="400" y="577">Живой текст поверх</text>
+<text class="ts" x="400" y="593">строгого результата</text>
+<line class="ln" x1="250" y1="604" x2="250" y2="626" marker-end="url(#ah)"/>
+
+<circle class="gray" cx="250" cy="648" r="18" stroke-width="2.5"/>
+<text class="t" x="282" y="653">Вердикт и домашнее задание</text>
+</svg>

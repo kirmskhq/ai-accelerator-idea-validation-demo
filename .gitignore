@@ -1,0 +1,7 @@
+.claude/
+.env
+*.local.json
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
