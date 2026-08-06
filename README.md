@@ -1,4 +1,4 @@
-# sber-accel-idea-validation-demo
+# ai-accelerator-idea-validation-demo
 
 Ассистент-интервьюер для первичного отбора заявок в стартап-акселератор, собранный
 в [Langflow](https://langflow.org). За 5-10 вопросов выясняет, стоят ли за идеей
