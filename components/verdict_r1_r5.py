@@ -4,8 +4,20 @@ from langflow.schema import Data
 
 
 class VerdictComponent(Component):
+    """Deterministic verdict.
+
+    Scores, entry and not_tech are read from the controller state in session
+    memory instead of being passed in by the agent.  The agent kept sending
+    booleans and ints into string inputs, which Langflow rejected and then
+    retried — costing a whole extra model round-trip per interview.
+    """
+
     display_name = "Verdict R1-R5"
-    description = "Deterministic pass / improve / not-tech decision computed from the four topic scores (mirrors core/verdict.py:decide()). Call once, at the very end of the interview."
+    description = (
+        "Deterministic pass / improve / not-tech decision. Reads the interview "
+        "scores from session state itself. Pass only how many working "
+        "competitors search_market found. Call once, at the very end."
+    )
     icon = "gavel"
     name = "Verdict"
 
@@ -26,31 +38,62 @@ class VerdictComponent(Component):
     ]
     DIM_HOMEWORK = {
         "segment": "Сегмент: сузь категорию до группы внутри неё — по признаку, ситуации или месту, — и скажи, где этих людей искать.",
-        "behavior": "Реальное поведение: опиши, что эти люди делают сейчас — какими инструментами, за какие деньги, сколько времени тратят. Не то, что они хотели бы, а то, что уже происходит.",
-        "alternatives": "Альтернативы: выясни, чем эти люди уже закрывают проблему — каким сервисом, костылём или ручным способом, — и во что им это обходится в деньгах и времени. «Аналогов нет» почти всегда значит, что плохо искали.",
+        "behavior": "Реальное поведение: опиши, что эти люди делают сейчас — какими инструментами, за какие деньги, сколько времени тратят.",
+        "alternatives": "Альтернативы: выясни, чем эти люди уже закрывают проблему и во что им это обходится в деньгах и времени.",
         "test": "Проверка: придумай эксперимент на неделю и до 10 000 ₽, у которого заранее назван результат, считающийся провалом.",
     }
 
     inputs = [
-        MessageTextInput(name="scores_json", display_name="Scores JSON", required=True, tool_mode=True,
-                         info='Score 0-2 per topic as JSON, e.g. {"segment": 2, "behavior": 1, "alternatives": 0, "test": 0}'),
-        MessageTextInput(name="entry", display_name="Entry", value="idea", tool_mode=True,
-                         info="What the person arrived with: nothing, idea, or built."),
-        MessageTextInput(name="not_tech", display_name="Not Tech", value="false", tool_mode=True,
-                         info="true only if this is clearly not a technology business, otherwise false."),
-        MessageTextInput(name="not_tech_reason", display_name="Not Tech Reason", value="", tool_mode=True,
-                         info="One short phrase in Russian saying why it is not a tech business. Empty when not_tech is false."),
-        MessageTextInput(name="market_count", display_name="Competitor Count", value="-1", tool_mode=True,
-                         info="How many working competitors search_market found. Use -1 if the market search was not run."),
+        MessageTextInput(
+            name="market_count",
+            display_name="Competitor Count",
+            value="-1",
+            tool_mode=True,
+            info=(
+                "How many working competitors search_market found, as digits. "
+                "Use -1 if the market search was not run."
+            ),
+        ),
     ]
 
     outputs = [
         Output(display_name="Verdict", name="verdict", method="compute_verdict"),
     ]
 
-    @staticmethod
-    def _as_bool(value):
-        return str(value).strip().lower() in ("true", "1", "yes", "да")
+    def _flow_uuid(self):
+        from uuid import UUID
+
+        fid = getattr(self.graph, "flow_id", None)
+        if isinstance(fid, UUID):
+            return fid
+        if isinstance(fid, str):
+            try:
+                return UUID(fid)
+            except ValueError:
+                return None
+        return None
+
+    def _load_state(self) -> dict:
+        import json
+        from langflow.memory import get_messages
+
+        try:
+            msgs = get_messages(
+                session_id=self.graph.session_id,
+                sender_name="__controller_state__",
+                order_by="timestamp",
+                order="DESC",
+                limit=1,
+                flow_id=self._flow_uuid(),
+            )
+        except Exception:
+            return {}
+        if msgs:
+            try:
+                return json.loads(msgs[0].text)
+            except (json.JSONDecodeError, AttributeError):
+                return {}
+        return {}
 
     @staticmethod
     def _as_int(value, default):
@@ -70,35 +113,38 @@ class VerdictComponent(Component):
         if count < 0:
             return "Проверка рынка не выполнена — оцени конкурентов вручную."
         if count == 0:
-            return "Поиск не нашёл ни одного работающего аналога. Обычно это значит одно из двух: либо рынка нет, либо запрос был сформулирован неудачно. Проверь руками, прежде чем радоваться."
+            return "Поиск не нашёл ни одного работающего аналога. Обычно это значит одно из двух: либо рынка нет, либо запрос был сформулирован неудачно."
         word = self._plural(count, "работающий аналог", "работающих аналога", "работающих аналогов")
         if count >= self.CROWDED_MARKET:
-            return "Найдено " + str(count) + " " + word + " — ниша плотная. Само по себе это не стоп, но нужен внятный ответ, почему клиент уйдёт от них к тебе."
+            return "Найдено " + str(count) + " " + word + " — ниша плотная. Нужен внятный ответ, почему клиент уйдёт от них к тебе."
         return "Найдено " + str(count) + " " + word + " — это нормальный признак живого рынка."
 
     def compute_verdict(self) -> Data:
-        import json
+        state = self._load_state()
+        topics = state.get("topics") or {}
+        entry = str(state.get("entry") or "idea").strip().lower()
+        not_tech = bool(state.get("not_tech", False))
+        not_tech_reason = str(state.get("not_tech_reason") or "").strip()
 
-        raw = self.scores_json
-        raw = raw.text if hasattr(raw, "text") else str(raw)
-        try:
-            scores = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            scores = {}
-        if not isinstance(scores, dict):
-            scores = {}
+        raw = self.market_count
+        raw = raw.text if hasattr(raw, "text") else raw
+        count = self._as_int(raw, -1)
 
-        entry = str(self.entry or "idea").strip().lower()
-        not_tech = self._as_bool(self.not_tech)
-        not_tech_reason = str(self.not_tech_reason or "").strip()
-        count = self._as_int(self.market_count, -1)
-
-        filled = {d: self._as_int(scores.get(d, 0), 0) for d in self.DIM_ORDER}
+        filled = {
+            d: self._as_int((topics.get(d) or {}).get("score", 0), 0)
+            for d in self.DIM_ORDER
+        }
         total = sum(filled.values())
         weak = [d for d in self.DIM_ORDER if filled[d] != 2]
         note = self._market_note(count)
 
-        if not_tech:
+        if not state:
+            result = {
+                "outcome": "improve", "rule": "R0",
+                "explanation": "Состояние интервью не найдено — оценки недоступны. Проверь, вызывался ли submit_answer.",
+                "weak_dims": self.DIM_ORDER, "homework": [], "market_note": note, "total": 0,
+            }
+        elif not_tech:
             result = {
                 "outcome": "not_tech", "rule": "R1",
                 "explanation": "Задача акселератора — технологические компании, которые могут расти без пропорционального роста затрат. " + (not_tech_reason or "Здесь этого признака нет."),
@@ -121,7 +167,7 @@ class VerdictComponent(Component):
         elif entry == "nothing":
             result = {
                 "outcome": "pass_homework", "rule": "R4",
-                "explanation": "Все четыре темы закрыты конкретно. Но пока это конкретика на словах: за ней не стоят разговоры с живыми людьми. Следующий шаг не вердикт, а поле.",
+                "explanation": "Все четыре темы закрыты конкретно. Но пока это конкретика на словах: за ней не стоят разговоры с живыми людьми.",
                 "weak_dims": [], "homework": self.HOMEWORK_BEGINNER, "market_note": note, "total": total,
             }
         else:
@@ -131,5 +177,6 @@ class VerdictComponent(Component):
                 "weak_dims": [], "homework": self.HOMEWORK_BEGINNER, "market_note": note, "total": total,
             }
 
+        result["scores"] = filled
         self.status = result
         return Data(data=result)
