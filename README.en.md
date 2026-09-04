@@ -5,6 +5,8 @@ applications, built in [Langflow](https://langflow.org). In 5–10 questions it
 finds out whether there are facts behind the idea, checks the market, and issues
 a verdict computed by deterministic code, together with targeted homework.
 
+Built for the accelerator programme of a major bank. The client is not named.
+
 A port of the original Python project `ai-accel` into a visual flow. The current
 version is **v3-update-1**: code drives the interview logic, the model is
 responsible for language only.
