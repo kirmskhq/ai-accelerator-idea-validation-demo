@@ -8,6 +8,8 @@
 Порт исходного питоновского проекта `ai-accel` в визуальный флоу. Актуальная
 версия — **v3-update-1**: логику интервью ведёт код, модель отвечает только за язык.
 
+*[English version — [`README.en.md`](README.en.md)]*
+
 <p align="center">
   <img src="presentation/bpmn-agentic-flow-ru.png" alt="BPMN-схема потока интервью" width="620">
 </p>
