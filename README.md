@@ -8,6 +8,12 @@
 Порт исходного питоновского проекта `ai-accel` в визуальный флоу. Актуальная
 версия — **v3-update-1**: логику интервью ведёт код, модель отвечает только за язык.
 
+<p align="center">
+  <img src="presentation/bpmn-agentic-flow-ru.png" alt="BPMN-схема потока интервью" width="620">
+</p>
+
+<p align="center"><sub>Схема потока интервью: контроллер на каждом ходу, вердикт R1–R5 в конце</sub></p>
+
 ---
 
 ## Что внутри
@@ -118,3 +124,7 @@ The Mom Test (поведение), Jobs to Be Done (альтернативы), L
 - [`docs/V3-UPDATE-1-RU.md`](docs/V3-UPDATE-1-RU.md) — архитектура актуальной версии, исправленные ошибки
 - [`docs/AGENTIC-WORKFLOW-RU.md`](docs/AGENTIC-WORKFLOW-RU.md) — первая агентная версия
 - [`docs/WORKFLOW.md`](docs/WORKFLOW.md) — история отладки исходного флоу на 16 узлов
+
+## Лицензия
+
+MIT — см. [`LICENSE`](LICENSE).
