@@ -14,59 +14,59 @@ text{font-family:'Segoe UI',Arial,sans-serif}
 <rect x="0" y="0" width="680" height="690" fill="#FFFFFF"/>
 
 <rect class="gray" x="60" y="21" width="10" height="10" rx="2"/>
-<text class="ts" x="76" y="30">человек</text>
+<text class="ts" x="76" y="30">human</text>
 <rect class="purple" x="140" y="21" width="10" height="10" rx="2"/>
-<text class="ts" x="156" y="30">модель</text>
+<text class="ts" x="156" y="30">model</text>
 <rect class="teal" x="214" y="21" width="10" height="10" rx="2"/>
-<text class="ts" x="230" y="30">код</text>
+<text class="ts" x="230" y="30">code</text>
 <rect class="blue" x="268" y="21" width="10" height="10" rx="2"/>
-<text class="ts" x="284" y="30">инструмент</text>
+<text class="ts" x="284" y="30">tool</text>
 <rect class="amber" x="366" y="21" width="10" height="10" rx="2"/>
-<text class="ts" x="382" y="30">шлюз</text>
+<text class="ts" x="382" y="30">gateway</text>
 
 <circle class="gray" cx="250" cy="70" r="18"/>
-<text class="t" x="282" y="75">Человек пришёл с идеей</text>
+<text class="t" x="282" y="75">Founder arrives with an idea</text>
 <line class="ln" x1="250" y1="88" x2="250" y2="96" marker-end="url(#ah)"/>
 
 <rect class="teal" x="76" y="96" width="348" height="64" rx="8"/>
-<text class="t" x="250" y="120" text-anchor="middle">Контроллер интервью (код)</text>
-<text class="ts" x="250" y="138" text-anchor="middle">читает весь разговор, ставит 0/1/2 по четырём темам</text>
-<text class="ts" x="250" y="154" text-anchor="middle">выполняется на каждом ходу — пропустить нельзя</text>
+<text class="t" x="250" y="120" text-anchor="middle">Interview controller (code)</text>
+<text class="ts" x="250" y="138" text-anchor="middle">reads the whole chat, scores 0/1/2 on four topics</text>
+<text class="ts" x="250" y="154" text-anchor="middle">runs every turn, cannot be skipped</text>
 <line class="ln" x1="250" y1="160" x2="250" y2="174" marker-end="url(#ah)"/>
 
 <path class="amber" d="M250,174 L276,200 L250,226 L224,200 Z"/>
-<text class="t" x="292" y="196">Все четыре темы на 2?</text>
-<text class="ts" x="292" y="214">или исчерпан бюджет в 10 вопросов</text>
-<text class="ts" x="258" y="243">нет</text>
-<text class="ts" x="566" y="193">да</text>
+<text class="t" x="292" y="196">All four topics at 2?</text>
+<text class="ts" x="292" y="214">or the 10-question budget is spent</text>
+<text class="ts" x="258" y="243">no</text>
+<text class="ts" x="566" y="193">yes</text>
 <line class="ln" x1="250" y1="226" x2="250" y2="248" marker-end="url(#ah)"/>
 
 <rect class="purple" x="110" y="248" width="280" height="56" rx="8"/>
-<text class="t" x="250" y="272" text-anchor="middle">Агент формулирует вопрос</text>
-<text class="ts" x="250" y="291" text-anchor="middle">тему назначил код, не длиннее 25 слов</text>
+<text class="t" x="250" y="272" text-anchor="middle">Agent words the question</text>
+<text class="ts" x="250" y="291" text-anchor="middle">topic set by code, 25 words max</text>
 <line class="ln" x1="250" y1="304" x2="250" y2="324" marker-end="url(#ah)"/>
 
 <rect class="gray" x="110" y="324" width="280" height="48" rx="8"/>
-<text class="t" x="250" y="353" text-anchor="middle">Человек отвечает</text>
+<text class="t" x="250" y="353" text-anchor="middle">Founder answers</text>
 <path class="ln" d="M110,348 L48,348 L48,128 L72,128" marker-end="url(#ah)"/>
 
 <path class="ln" d="M276,200 L600,200 L600,424 L394,424" marker-end="url(#ah)"/>
 
 <rect class="blue" x="110" y="398" width="280" height="52" rx="8"/>
-<text class="t" x="250" y="422" text-anchor="middle">Поиск аналогов в вебе</text>
-<text class="ts" x="250" y="441" text-anchor="middle">запрос формулирует агент, ссылки живые</text>
+<text class="t" x="250" y="422" text-anchor="middle">Web search for analogues</text>
+<text class="ts" x="250" y="441" text-anchor="middle">agent writes the query, links are live</text>
 <line class="ln" x1="250" y1="450" x2="250" y2="470" marker-end="url(#ah)"/>
 
 <rect class="teal" x="110" y="470" width="280" height="52" rx="8"/>
-<text class="t" x="250" y="494" text-anchor="middle">Вердикт R1–R5 в коде</text>
-<text class="ts" x="250" y="513" text-anchor="middle">одинаковые оценки — одинаковый вердикт</text>
+<text class="t" x="250" y="494" text-anchor="middle">R1–R5 verdict in code</text>
+<text class="ts" x="250" y="513" text-anchor="middle">same scores, same verdict</text>
 <line class="ln" x1="250" y1="522" x2="250" y2="542" marker-end="url(#ah)"/>
 
 <rect class="purple" x="110" y="542" width="280" height="52" rx="8"/>
-<text class="t" x="250" y="566" text-anchor="middle">Агент объясняет вердикт</text>
-<text class="ts" x="250" y="585" text-anchor="middle">живой текст поверх строгого результата</text>
+<text class="t" x="250" y="566" text-anchor="middle">Agent explains the verdict</text>
+<text class="ts" x="250" y="585" text-anchor="middle">natural text over a strict result</text>
 <line class="ln" x1="250" y1="594" x2="250" y2="618" marker-end="url(#ah)"/>
 
 <circle class="gray" cx="250" cy="636" r="18" stroke-width="2.5"/>
-<text class="t" x="282" y="641">Вердикт и домашнее задание</text>
+<text class="t" x="282" y="641">Verdict and homework</text>
 </svg>

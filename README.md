@@ -1,134 +1,75 @@
-# ai-accelerator-idea-validation-demo
+# AI Screener for Startup Accelerator Applications
 
-Ассистент-интервьюер для первичного отбора заявок в стартап-акселератор, собранный
-в [Langflow](https://langflow.org). За 5-10 вопросов выясняет, стоят ли за идеей
-факты, проверяет рынок и выдаёт вердикт, посчитанный детерминированным кодом,
-вместе с адресным домашним заданием.
+An AI interviewer that does the first-pass screening of startup applications: in 4–10 questions it checks whether there are facts behind the idea, looks up the market, and issues a pass or fail verdict computed by deterministic code, with targeted homework for the founder.
 
-Сделано под запрос акселерационной программы крупного банка. Название заказчика
-не раскрывается.
+Built in [Langflow](https://langflow.org) for the accelerator programme of a major bank.
 
-Порт исходного питоновского проекта `ai-accel` в визуальный флоу. Актуальная
-версия — **v3-update-1**: логику интервью ведёт код, модель отвечает только за язык.
-
-*[English version — [`README.en.md`](README.en.md)]*
 
 <p align="center">
-  <img src="presentation/bpmn-agentic-flow-ru.png" alt="BPMN-схема потока интервью" width="620">
+  <img src="presentation/bpmn-agentic-flow.png" alt="Interview flow diagram" width="620">
 </p>
 
-<p align="center"><sub>Схема потока интервью: контроллер на каждом ходу, вердикт R1–R5 в конце</sub></p>
+## The product case
 
----
+**Problem.** Accelerator experts spend their first call with every applicant on the same basic questions, and most ideas fail them. Experts' time goes to screening instead of the strongest teams.
 
-## Что внутри
+**User.** The founder gets a short interview and clear homework. The programme team gets a consistent verdict before any expert time is spent.
 
-| Папка | Содержимое |
-|---|---|
-| `components/` | Исходный код кастомных компонентов Langflow отдельными файлами |
-| `docs/` | Архитектура, находки, компромиссы, тезисы для демо |
-| `presentation/` | Презентация и BPMN-схема потока |
+**Key decision: the model speaks, the code decides.** In the first version the interview logic was a tool the agent was "supposed" to call. In practice it called it on one turn out of five. I moved the logic into a controller that runs on every turn, and left the model only the wording. Controller runs went from 1 in 5 to 5 in 5.
 
-## Архитектура
+**Quality bar.** Four topics, each scored 0, 1 or 2, based on Customer Development, The Mom Test, Jobs to Be Done and Lean Startup. An application passes only with 2 on all four. The verdict rules (R1–R5) are plain code, so the same scores always give the same result.
+
+**Model choice.** The flow is model-agnostic. I compared seven models for the interviewer role; only one held the two-attempt rule without hinting at the answer.
+
+| Role | Model | Why |
+|---|---|---|
+| Interviewer | DeepSeek V4 Flash | The only one of seven that kept the rules |
+| Scoring | gpt-oss-120b | Strict JSON, temperature 0, three times faster (6.9 s vs 19.6 s) |
+| Web search | YandexGPT search tool | Returns live links to similar products |
+
+**Results (synthetic runs).** 6–20 s per turn, 4–5 questions against a budget of 10, about $0.15 per application.
+
+**What it would take to go live.** A labelled set of real applications scored by experts, to measure how often the AI agrees with them. Scores still come from a model, so this is the precondition for production use.
+
+## Architecture
 
 ```
-Chat Input ─┬──────────────────────────────────────► Agent (input_value)
-            │
-            └──► Interview Controller ──► Agent (system_prompt)
+Chat Input ─┬──────────────────────────────► Agent (input)
+            └──► Interview Controller ──────► Agent (system prompt)
 
-Yandex Chat Model ────────────────────► Agent (model)
-Verdict R1-R5 (tool) ─────────────────► Agent (tools)
-Yandex Web Search (tool) ─────────────► Agent (tools)
-
-Agent ────────────────────────────────► Chat Output
+Chat Model ─────────────────────────────────► Agent (model)
+Verdict R1-R5 (tool) ───────────────────────► Agent (tools)
+Web Search (tool) ──────────────────────────► Agent (tools)
+Agent ──────────────────────────────────────► Chat Output
 ```
 
-Семь узлов, семь рёбер. Схема потока — `presentation/bpmn-agentic-flow-ru.png`.
-
-### Принцип: модель говорит — код решает
-
-| Компонент | Роль | Кто решает |
+| Component | Role | Who decides |
 |---|---|---|
-| **Interview Controller** | Читает разговор, ставит оценки, ведёт счётчики и бюджет, выбирает следующую тему, собирает системный промпт для агента | Код |
-| **Agent** | Формулирует вопрос по назначенной теме, пересказывает вердикт | Модель |
-| **Verdict R1-R5** | Правила R1–R5, читает оценки из состояния сам | Код |
-| **Yandex Web Search** | Ищет аналоги, возвращает живые ссылки | Инструмент AI Studio |
+| Interview Controller | Scores answers, keeps counters and the question budget, picks the next topic, builds the agent's prompt | Code |
+| Agent | Phrases the question, explains the verdict | Model |
+| Verdict R1-R5 | Applies the pass rules to the scores | Code |
+| Web Search | Finds similar products, returns live links | Tool |
 
-Контроллер стоит в графе между репликой человека и агентом, поэтому выполняется
-**на каждом ходу принудительно**. В предыдущей версии он был инструментом, который
-агент «должен» вызывать, — на практике модель вызывала его в одном ходу из пяти.
+## How to run
 
-Важная оговорка для технической аудитории: **сами оценки ставит модель**, отдельным
-вызовом с `temperature=0` и строгой JSON-схемой (только 0/1/2 по теме). Код владеет
-всем вокруг этого суждения: какие темы ещё оценивать, монотонное слияние (двойка не
-падает обратно), счётчики попыток, бюджет вопросов и правила вердикта.
+1. Run Langflow (tested with Python 3.14 in Docker).
+2. Build the flow from the diagram, pasting the component code from `components/`.
+3. Add your API keys in the model, search and controller components.
 
-## Методология
+There is no ready-to-import flow JSON: the current version is fully described by `components/`.
 
-Четыре темы опираются на известные рамки: Customer Development (аудитория),
-The Mom Test (поведение), Jobs to Be Done (альтернативы), Lean Startup (проверка).
-По каждой — оценка 0/1/2, проходит только тот, у кого все четыре на 2.
+## Known limitations
 
-Подробности — [`docs/DEMO-TEZISY-RU.md`](docs/DEMO-TEZISY-RU.md).
+- Scores come from a model, so the same transcript can be graded slightly differently.
+- No labelled dataset yet, so scoring consistency is not measured.
+- The scoring call has a 90 s timeout; a hung request once made a turn take ~96 s.
 
-## Замеры
+## Repository
 
-Все прогоны синтетические: реальных заявок не было, с экспертной оценкой не
-сравнивали, размеченного датасета нет.
-
-| Метрика | Значение |
+| Folder | Contents |
 |---|---|
-| Задержка на ход | 6–20 с |
-| Длина интервью | 4–5 вопросов при бюджете 10 |
-| Стоимость заявки | ≈ 12 ₽ (потолок ≈ 17 ₽) |
-| Вызовов контроллера | 5 из 5 (было 1 из 5) |
+| `components/` | Custom Langflow components, one file each |
+| `docs/WORKFLOW.md` | Debugging log: model comparison, prompt drift and fixes |
+| `presentation/` | Flow diagram |
 
-## Модели
-
-| Где | Модель | Почему |
-|---|---|---|
-| Агент | `deepseek-v4-flash` | Из семи сравнённых моделей единственный держал правило двух попыток и не подсказывал признаки аудитории |
-| Оценка | `gpt-oss-120b` | Служебный JSON, человек его не видит; втрое быстрее (6,9 с против 19,6 с) |
-| Веб-поиск | `yandexgpt` | Работает, не трогали |
-
-`yandexgpt-5-pro` не поддерживает вызов инструментов и непригоден в принципе.
-
-## Как запустить
-
-1. Поднимите Langflow (проверялось на сборке с Python 3.14 в Docker).
-2. Соберите флоу по схеме выше, вставив код компонентов из `components/`.
-3. Впишите свои Yandex API Key и Folder ID в `Yandex Chat Model`,
-   `Yandex Web Search` и `Interview Controller`.
-
-## Известные ограничения
-
-- **Оценки ставит модель** — одну и ту же расшифровку она может оценить чуть
-  по-разному. Правила вердикта детерминированы, но входы в них нет.
-- **Нет размеченного датасета** — согласованность оценок не измерена. Это условие
-  промышленного использования.
-- **Таймаут вызова оценки 90 с.** Если запрос к API подвиснет, ход может занять
-  ~96 с вместо обычных 6–20 с. Наблюдалось один раз на демо; лечится снижением
-  таймаута до ~20 с, но правка не внесена.
-
-## Экспорта флоу нет
-
-Готовый JSON для импорта в Langflow в репозитории отсутствует: экспорт актуальной
-v3-update-1 сделать не удалось, Docker с Langflow был недоступен на момент
-публикации. Устаревший экспорт первой агентной версии удалён, чтобы не вводить в
-заблуждение. Актуальный код всех компонентов лежит в `components/` и полностью
-описывает текущую версию — флоу собирается по схеме выше.
-
-## Безопасность
-
-Ключей в репозитории нет: ни в коде компонентов, ни в документации.
-
-## Документация
-
-- [`docs/DEMO-TEZISY-RU.md`](docs/DEMO-TEZISY-RU.md) — тезисы для демо
-- [`docs/V3-UPDATE-1-RU.md`](docs/V3-UPDATE-1-RU.md) — архитектура актуальной версии, исправленные ошибки
-- [`docs/AGENTIC-WORKFLOW-RU.md`](docs/AGENTIC-WORKFLOW-RU.md) — первая агентная версия
-- [`docs/WORKFLOW.md`](docs/WORKFLOW.md) — история отладки исходного флоу на 16 узлов
-
-## Лицензия
-
-MIT — см. [`LICENSE`](LICENSE).
+No API keys are stored in the repository. MIT license.
