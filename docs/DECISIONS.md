@@ -2,7 +2,8 @@
 
 The decisions that shaped the screener, each with the evidence behind it.
 D1–D7 came out of building and debugging the flow. D8–D12 came from reviewing
-the components against Langflow 1.11.1's source code. Measurements are in
+the components against Langflow 1.11.1's source code, and D13–D15 from a live
+run on a second provider. Measurements are in
 [model-evaluation.md](model-evaluation.md).
 
 ## D1. One agent instead of a hand-wired graph
@@ -155,3 +156,39 @@ The number itself was the count of cited URLs, and two pages from one site
 counted twice. It is now the number of distinct websites among the URLs the
 search actually cited. The founder-facing text describes it that way: sites
 with similar products, not verified competitors.
+
+## D13. The end of the interview has its own prompt
+
+Once every topic is closed or out of attempts, the controller no longer sends
+the interviewer persona with its question rules. It sends a short final-stage
+prompt instead: call `search_market`, call `compute_verdict`, pass on the
+result. With the question rules still in place, Qwen 3.6 kept asking questions
+and never called the tools (see the live run in
+[model-evaluation.md](model-evaluation.md)). The technical-failure message
+gets the same treatment.
+
+Messages sent after the interview is over no longer change anything: no
+scoring and no attempts, and the agent keeps getting the final instruction.
+
+## D14. The verdict writes the founder-facing text
+
+`compute_verdict` returns a ready `message`: the decision, the explanation,
+the market note and the homework. The agent is told to pass it on, smoothing
+the wording if it likes but removing nothing. A weaker model otherwise reduced
+a pass to one line and dropped the homework, which is the most useful part of
+the answer.
+
+## D15. The provider is a setting
+
+All three model components take an API base URL, defaulting to Yandex AI
+Studio. Yandex model names are expanded to its `gpt://<folder>/...` format;
+other providers take the model name as is, and the folder ID is then unused.
+The web search has two backends:
+
+- On Yandex, a model with the built-in `web_search` tool.
+- On NeuralDeep, its `/search/web` endpoint, followed by a model that picks the
+  actual products out of the results. A strict JSON schema limits that pick to
+  URLs the search returned, so it cannot invent links.
+
+This makes the flow testable on NeuralDeep's free tier without a Yandex
+account.

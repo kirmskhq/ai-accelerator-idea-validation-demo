@@ -37,6 +37,12 @@ class VerdictComponent(Component):
         "test": "Проверка",
     }
     CROWDED_MARKET = 10
+    OUTCOME_RU = {
+        "pass": "Проходишь первый фильтр.",
+        "pass_homework": "Проходишь первый фильтр, но с домашним заданием.",
+        "improve": "Пока не проходишь: идею нужно доработать.",
+        "not_tech": "Пока не проходишь: это не технологический бизнес.",
+    }
 
     STATE_SESSION_SUFFIX = "::interview-state"
     STATE_SENDER_NAME = "__controller_state__"
@@ -189,5 +195,11 @@ class VerdictComponent(Component):
             }
 
         result["scores"] = filled
+        # The founder-facing text is composed here, so the agent only has to
+        # pass it on; a weaker model otherwise shortened it to one line.
+        parts = [self.OUTCOME_RU[result["outcome"]], result["explanation"], note]
+        if result["homework"]:
+            parts.append("Что сделать дальше:\n" + "\n".join("— " + h for h in result["homework"]))
+        result["message"] = "\n\n".join(parts)
         self.status = result
         return Data(data=result)

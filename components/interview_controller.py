@@ -54,6 +54,7 @@ class InterviewControllerComponent(Component):
 
     STATE_SESSION_SUFFIX = "::interview-state"
     STATE_SENDER_NAME = "__controller_state__"
+    YANDEX_BASE = "https://ai.api.cloud.yandex.net/v1"
 
     RUBRIC = {
         "segment": (
@@ -129,8 +130,9 @@ class InterviewControllerComponent(Component):
             required=True,
             info="Wire this from Chat Input. Runs on every turn automatically.",
         ),
-        SecretStrInput(name="api_key", display_name="Yandex API Key", required=True),
-        StrInput(name="folder_id", display_name="Yandex Folder ID", required=True),
+        SecretStrInput(name="api_key", display_name="API Key", required=True),
+        StrInput(name="folder_id", display_name="Yandex Folder ID", required=False,
+                 info="Yandex AI Studio only."),
         StrInput(
             name="model",
             display_name="Scoring Model",
@@ -143,6 +145,13 @@ class InterviewControllerComponent(Component):
             value=0.0,
             range_spec={"min": 0.0, "max": 1.0, "step": 0.01},
         ),
+        StrInput(
+            name="api_base",
+            display_name="API Base URL",
+            value=YANDEX_BASE,
+            advanced=True,
+            info="OpenAI-compatible endpoint with the Responses API, e.g. https://api.neuraldeep.ru/v1",
+        ),
     ]
 
     outputs = [
@@ -151,13 +160,20 @@ class InterviewControllerComponent(Component):
 
     # ---------------------------------------------------------------- helpers
 
+    def _is_yandex(self) -> bool:
+        return "api.cloud.yandex.net" in (self.api_base or self.YANDEX_BASE)
+
     def _model_uri(self) -> str:
+        # Yandex AI Studio expects gpt://<folder>/<model>/latest; other
+        # OpenAI-compatible providers take the model name as is.
         model = self.model or "gpt-oss-120b"
-        if not model.startswith(("gpt://", "ds://")):
-            if "/" not in model:
-                model = model + "/latest"
-            model = "gpt://" + self.folder_id + "/" + model
-        return model
+        if not self._is_yandex() or model.startswith(("gpt://", "ds://")):
+            return model
+        if not self.folder_id:
+            raise ValueError("Yandex Folder ID is required for Yandex AI Studio models.")
+        if "/" not in model:
+            model = model + "/latest"
+        return "gpt://" + self.folder_id + "/" + model
 
     def _flow_uuid(self):
         # Inside a tool call Langflow hands components a placeholder graph whose
@@ -294,8 +310,8 @@ class InterviewControllerComponent(Component):
 
         client = openai.OpenAI(
             api_key=self.api_key,
-            base_url="https://ai.api.cloud.yandex.net/v1",
-            project=self.folder_id,
+            base_url=(self.api_base or self.YANDEX_BASE).rstrip("/"),
+            project=self.folder_id if self._is_yandex() else None,
             timeout=90,
         )
 
@@ -341,6 +357,7 @@ class InterviewControllerComponent(Component):
             "missing — чего не хватает до 2, не длиннее 10 слов; при 2 — пустая строка."
         )
 
+        model_uri = self._model_uri()  # a configuration error should fail loudly, not count as an outage
         last_err = ""
         for attempt in range(2):
             text = prompt if not attempt else (
@@ -349,7 +366,7 @@ class InterviewControllerComponent(Component):
             )
             try:
                 resp = client.responses.create(
-                    model=self._model_uri(),
+                    model=model_uri,
                     instructions=self.SCORER_SYSTEM,
                     input=text,
                     temperature=self.temperature,
@@ -400,25 +417,50 @@ class InterviewControllerComponent(Component):
             "вопрос дословно."
         )
 
-    def _final_block(self, state: dict) -> str:
+    # The two end states get a prompt of their own, without the persona's
+    # question rules: with those rules in place, a weaker model kept asking
+    # questions instead of calling the tools.
+
+    def _final_prompt(self, state: dict) -> str:
         return (
-            "\nИнтервью завершено, вопросов больше не задавай.\n"
-            "1) Вызови search_market с запросом по идее и аудитории: "
+            "Ты — первый фильтр стартап-акселератора. Интервью завершено, "
+            "вопросов больше не задавай.\n\n"
+            "Сейчас сделай по порядку:\n"
+            "1) Вызови инструмент search_market с запросом по идее и аудитории: "
             + (state["idea"] or "идея не названа") + ".\n"
-            "2) Вызови compute_verdict. Аргументы не нужны: оценки и результат "
-            "поиска он берёт из состояния сам.\n"
-            "3) Перескажи человеку результат compute_verdict, не меняя сути. "
+            "2) Вызови инструмент compute_verdict. Аргументы не нужны: оценки и "
+            "результат поиска он берёт из состояния сам.\n"
+            "3) Передай человеку текст из поля message результата compute_verdict. "
+            "Можно сгладить формулировки, но ничего не убирай и не меняй суть: "
+            "решение, объяснение, заметка о рынке и домашнее задание остаются. "
+            "Баллы не называй.\n\n"
             "Если compute_verdict вернул ошибку, вердикт не выноси: скажи, что "
             "произошёл технический сбой и вердикт посчитать не удалось."
         )
 
-    def _failure_block(self) -> str:
+    def _failure_prompt(self) -> str:
         return (
-            "\nСЛУЖЕБНО: оценка ответов сейчас недоступна из-за технического сбоя.\n"
-            "Вопросов больше не задавай и вердикт не выноси, инструменты не вызывай.\n"
-            "Скажи человеку одной-двумя фразами, что произошёл технический сбой и "
-            "интервью нужно продолжить чуть позже."
+            "Ты — первый фильтр стартап-акселератора. Оценка ответов сейчас "
+            "недоступна из-за технического сбоя.\n"
+            "Вопросов больше не задавай, вердикт не выноси, инструменты не вызывай.\n"
+            "Скажи человеку одной-двумя фразами по-русски, на «ты», что произошёл "
+            "технический сбой и интервью нужно продолжить чуть позже."
         )
+
+    def _progress(self, topics: dict) -> tuple:
+        """Return (complete, next_topic) for the current scores and attempts."""
+        nxt = None
+        for d in self.DIM_ORDER:
+            if topics[d]["score"] < 2 and topics[d]["attempts"] < self.MAX_ATTEMPTS:
+                nxt = d
+                break
+        total_attempts = sum(topics[d]["attempts"] for d in self.DIM_ORDER)
+        complete = (
+            all(topics[d]["score"] == 2 for d in self.DIM_ORDER)
+            or total_attempts >= self.MAX_QUESTIONS
+            or nxt is None
+        )
+        return complete, nxt
 
     # ---------------------------------------------------------------- main
 
@@ -435,8 +477,11 @@ class InterviewControllerComponent(Component):
         state = self._load_state(has_bot_turn)
         topics = state["topics"]
         topic = state["current_topic"] or self.DIM_ORDER[0]
+        already_complete, _ = self._progress(topics)
 
-        if answer:
+        # Once the interview is over, further messages change nothing: no
+        # scoring, no attempts. The agent keeps getting the final instruction.
+        if answer and not already_complete:
             # The founder's opening message is the idea itself, not an answer
             # to a question, so it is scored but does not use up an attempt.
             counts_as_answer = has_bot_turn
@@ -477,25 +522,12 @@ class InterviewControllerComponent(Component):
                 if fresh.get("not_tech_reason"):
                     state["not_tech_reason"] = str(fresh["not_tech_reason"])
 
-        def _next_topic():
-            for d in self.DIM_ORDER:
-                if topics[d]["score"] < 2 and topics[d]["attempts"] < self.MAX_ATTEMPTS:
-                    return d
-            return None
-
-        nxt = _next_topic()
-        total_attempts = sum(topics[d]["attempts"] for d in self.DIM_ORDER)
-        complete = (
-            all(topics[d]["score"] == 2 for d in self.DIM_ORDER)
-            or total_attempts >= self.MAX_QUESTIONS
-            or nxt is None
-        )
+        complete, nxt = self._progress(topics)
         failed = int(state.get("score_errors_in_row") or 0) >= self.MAX_SCORE_ERRORS_IN_ROW
 
-        if failed:
-            block = self._failure_block()
-        elif complete:
-            block = self._final_block(state)
+        block = ""
+        if failed or complete:
+            pass
         elif nxt == topic:
             if topics[topic]["attempts"] > 0:
                 block = self._retry_block(topics, topic)
@@ -520,4 +552,8 @@ class InterviewControllerComponent(Component):
             "scores": {d: topics[d]["score"] for d in self.DIM_ORDER},
             "last_score_error": state["last_score_error"],
         }
+        if failed:
+            return Message(text=self._failure_prompt())
+        if complete:
+            return Message(text=self._final_prompt(state))
         return Message(text=self.STATIC_PERSONA + block)

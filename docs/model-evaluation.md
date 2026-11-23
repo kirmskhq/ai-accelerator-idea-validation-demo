@@ -97,7 +97,51 @@ Two things cut the question-turn latency from 15–38 s down to the range above:
    capped at 10 words, only still-open topics scored, and only the last 10
    messages sent (scores never go down, so closed topics need no re-reading).
 
-These measurements predate fixes D8–D12 in [DECISIONS.md](DECISIONS.md).
+These measurements predate fixes D8–D15 in [DECISIONS.md](DECISIONS.md).
 Those fixes leave the models and the scoring rubric unchanged. One has a
 visible effect: the founder's opening message no longer uses up an attempt on the
 first topic, so an interview can run one question longer than measured here.
+
+## Live run on NeuralDeep (November 2026)
+
+The current version was run end to end on NeuralDeep's free tier, with all
+three roles on `qwen3.6-35b-a3b-noreason`. The run used Langflow 1.11.1's
+own Agent, message store and tool-permission checks, and loaded the flow from
+its JSON the way the Langflow server does. The founder was simulated: each
+turn it sent a prepared answer for whichever topic the controller had just
+assigned.
+
+| | Strong founder | Weak founder |
+|---|---|---|
+| Opening | Burnout app for students, MVP, 3,000 users | "A platform for choosing concrete slabs" |
+| Questions asked | 3 | 7 |
+| Verdict | pass (R5), with homework | improve (R3): behaviour and validation still vague |
+| Question turns | 5–15 s | 2–5 s |
+| Final turn (search + verdict) | 16 s | 9 s |
+| Scores seen by the agent | none | none |
+
+Both interviews together used 27 chat requests. The behaviour matched the
+design: one question per reply, a second question on a weak answer, a move to
+the next topic after two attempts, and the verdict text relayed in full.
+
+What the run surfaced:
+
+- **The final step needed its own prompt (D13).** In the first live run the
+  agent ignored the instruction to call the tools and kept asking questions
+  for 11 more turns. In a direct test, Qwen called `search_market` 0 times out
+  of 1 with the question rules in the prompt, and 3 times out of 3 with a
+  separate final-stage prompt.
+- **A weaker model shortens the verdict (D14).** Qwen retold a pass verdict as
+  one line, dropping the explanation and the homework. The verdict now writes
+  the founder-facing text itself.
+- **Scoring on Qwen 3.6 is lenient.** It gave 2 to «строительные компании и
+  их поставщики», which the rubric's own examples treat as a whole category
+  (a 1). The reasoning variant gave the same score and took 29 s instead of
+  3 s. The free tier is good for testing the flow, not for judging scoring
+  quality.
+- **NeuralDeep's web search returns weak matches** for these queries: app-store
+  front pages, catalogues and articles. The model correctly rejected them, so
+  both runs reported no similar products. The verdict does not depend on that
+  count.
+- The model praised the founder once («Отлично, 3000 пользователей — это уже
+  что-то»), which the persona forbids.

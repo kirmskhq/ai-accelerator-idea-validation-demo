@@ -26,7 +26,7 @@ An independent prototype, built in [Langflow](https://langflow.org) around the s
 | Scoring | `gpt-oss-120b` | Strict JSON at temperature 0, about three times faster than DeepSeek (6.9 s vs 19.6 s) |
 | Web search | `yandexgpt/latest` with Yandex's search tool | Returns the URLs the search actually cited |
 
-**Results (synthetic interviews).** 6–20 s per question turn, 4–5 questions against a budget of 10, about ₽12 (≈ $0.15) per application. Method and caveats: [docs/model-evaluation.md](docs/model-evaluation.md).
+**Results (synthetic interviews).** On Yandex AI Studio: 6–20 s per question turn, 4–5 questions against a budget of 10, about ₽12 (≈ $0.15) per application. The current version also ran end to end on NeuralDeep's free tier: a strong founder passed after 3 questions, a weak one got "improve" with targeted homework after 7. Method, transcripts and caveats: [docs/model-evaluation.md](docs/model-evaluation.md).
 
 **What it would take to go live.** A labelled set of real applications scored by experts, to measure how often the AI agrees with them. Scores still come from a model, so this is the precondition for production use.
 
@@ -46,7 +46,7 @@ Agent ────────────────────────�
 |---|---|---|
 | Interview Controller | Has a model score the open topics, keeps attempt counters and the question budget, picks the next topic, builds the agent's instructions | Code (scores: model) |
 | Agent | Phrases the question (its instructions set a 25-word limit), explains the verdict | Model |
-| Verdict R1-R5 | Applies the pass rules to the saved scores; takes no arguments | Code |
+| Verdict R1-R5 | Applies the pass rules to the saved scores and writes the founder-facing text; takes no arguments | Code |
 | Web Search | Finds similar products, counts the distinct sites cited | Tool |
 
 The controller, the verdict and the search share state through a companion session (`<session id>::interview-state`) that the agent's chat memory never loads, so the interviewer model does not see the scores. Why each piece is built this way: [docs/DECISIONS.md](docs/DECISIONS.md).
@@ -66,16 +66,39 @@ The controller, the verdict and the search share state through a companion sessi
    | Yandex Web Search, in Tool Mode | Agent → Tools |
    | Agent → Response | Chat Output → Inputs |
 
-4. Put your Yandex AI Studio API key and folder ID into Yandex Chat Model, Interview Controller and Yandex Web Search.
+4. Put your Yandex AI Studio API key and folder ID into Yandex Chat Model, Interview Controller and Yandex Web Search. To run on another provider instead, see below.
 5. Optional: paste `components/agent_fallback_prompt.txt` into the Agent's instructions field. The controller's connection overrides it; if that connection is ever lost, the agent still interviews topic by topic, without scores or a verdict, instead of running with an empty prompt.
 
 There is no ready-to-import flow file yet; `components/` and the wiring table above describe the whole flow.
+
+### Free testing on NeuralDeep
+
+The flow also runs on [NeuralDeep](https://neuraldeep.tech)'s free tier, which needs no Yandex account. In all three model components:
+
+| Setting | Value |
+|---|---|
+| API Key | your NeuralDeep key |
+| API Base URL (advanced) | `https://api.neuraldeep.ru/v1` |
+| Model | `qwen3.6-35b-a3b-noreason` |
+| Yandex Folder ID | leave empty |
+
+Free-tier limits, as the API reported them for a free key in November 2026:
+
+| Limit | Free tier |
+|---|---|
+| Chat requests | 400 per 3-hour window (fixed UTC windows), 2,000 per week |
+| Rate | 20 requests per minute, 3 at the same time |
+| Request size | 46,112 input tokens per request |
+| Web search | 30 searches per day, 300 per month |
+| Gateway timeout | 900 s (the components give up after 90 s) |
+
+An interview uses about 2 chat requests per question and 4–5 for the final turn; the two test interviews (3 and 7 questions) used 27 requests together. Retrying many times after a limit error triggers a 60-minute pause, so wait as long as the error's `Retry-After` header says. The free tier does not include `gpt-oss-120b` or DeepSeek, so all three roles run on Qwen 3.6. That is enough to test the flow, but not to judge scoring quality (see [model-evaluation.md](docs/model-evaluation.md)).
 
 ## Known limitations
 
 - **Scores come from a model**, so the same transcript can be graded slightly differently. The verdict rules are deterministic; their inputs are not.
 - **No labelled dataset yet**, so scoring consistency has not been measured.
-- **Yandex AI Studio only.** All three model components call Yandex's OpenAI-compatible endpoint. Another provider needs a different base URL and model names.
+- **Two tested providers.** Yandex AI Studio (default) and NeuralDeep. Any other OpenAI-compatible endpoint with the Responses API should work for the interview and the scoring, but the web search only knows those two.
 - **Last write wins.** State is saved once per turn; two turns sent to the same session at the same moment would overwrite each other. That is fine for one person chatting; under load it needs a lock.
 - **The market count is a proxy**: the number of distinct websites the search cited, not a verified list of competitors.
 - **Scoring call timeout is 90 s.** One hung request made a turn take about 96 s.
