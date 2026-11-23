@@ -21,8 +21,8 @@ text{font-family:'Segoe UI',Arial,sans-serif}
 <text class="ts" x="230" y="30">code</text>
 <rect class="blue" x="268" y="21" width="10" height="10" rx="2"/>
 <text class="ts" x="284" y="30">tool</text>
-<rect class="amber" x="366" y="21" width="10" height="10" rx="2"/>
-<text class="ts" x="382" y="30">gateway</text>
+<rect class="amber" x="322" y="21" width="10" height="10" rx="2"/>
+<text class="ts" x="338" y="30">gateway</text>
 
 <circle class="gray" cx="250" cy="70" r="18"/>
 <text class="t" x="282" y="75">Founder arrives with an idea</text>
@@ -30,8 +30,8 @@ text{font-family:'Segoe UI',Arial,sans-serif}
 
 <rect class="teal" x="76" y="96" width="348" height="64" rx="8"/>
 <text class="t" x="250" y="120" text-anchor="middle">Interview controller (code)</text>
-<text class="ts" x="250" y="138" text-anchor="middle">reads the whole chat, scores 0/1/2 on four topics</text>
-<text class="ts" x="250" y="154" text-anchor="middle">runs every turn, cannot be skipped</text>
+<text class="ts" x="250" y="138" text-anchor="middle">reads recent turns; a model scores four topics 0/1/2</text>
+<text class="ts" x="250" y="154" text-anchor="middle">code keeps counters, runs every turn, cannot be skipped</text>
 <line class="ln" x1="250" y1="160" x2="250" y2="174" marker-end="url(#ah)"/>
 
 <path class="amber" d="M250,174 L276,200 L250,226 L224,200 Z"/>
@@ -54,7 +54,7 @@ text{font-family:'Segoe UI',Arial,sans-serif}
 
 <rect class="blue" x="110" y="398" width="280" height="52" rx="8"/>
 <text class="t" x="250" y="422" text-anchor="middle">Web search for analogues</text>
-<text class="ts" x="250" y="441" text-anchor="middle">agent writes the query, links are live</text>
+<text class="ts" x="250" y="441" text-anchor="middle">query by agent, links from search results</text>
 <line class="ln" x1="250" y1="450" x2="250" y2="470" marker-end="url(#ah)"/>
 
 <rect class="teal" x="110" y="470" width="280" height="52" rx="8"/>
