@@ -1,22 +1,30 @@
 from langflow.custom import Component
-from langflow.io import MessageTextInput, Output
+from langflow.io import Output
 from langflow.schema import Data
 
 
 class VerdictComponent(Component):
-    """Deterministic verdict.
+    """Deterministic verdict: rules R1-R5 applied to the interview state.
 
-    Scores, entry and not_tech are read from the controller state in session
-    memory instead of being passed in by the agent.  The agent kept sending
-    booleans and ints into string inputs, which Langflow rejected and then
-    retried — costing a whole extra model round-trip per interview.
+    Takes no arguments. The scores, entry stage and not-tech flag come from the
+    Interview Controller's state, and the number of similar products comes from
+    the record Yandex Web Search leaves in the same state session. The agent
+    therefore has nothing to pass in and nothing to get wrong.
+
+    Fails loudly: if the state cannot be read, is missing or is malformed, the
+    tool raises an error that tells the agent not to improvise a verdict. An
+    earlier version substituted zeros instead, and produced a confident,
+    well-argued and completely wrong "improve" verdict.
+
+    Self-contained on purpose (one file per Langflow node), so the state
+    helpers are repeated from interview_controller.py.
     """
 
     display_name = "Verdict R1-R5"
     description = (
-        "Deterministic pass / improve / not-tech decision. Reads the interview "
-        "scores from session state itself. Pass only how many working "
-        "competitors search_market found. Call once, at the very end."
+        "Deterministic pass / improve / not-tech decision. Takes no arguments: "
+        "reads the interview scores and the market search result from session "
+        "state. Call once, at the very end, after search_market."
     )
     icon = "gavel"
     name = "Verdict"
@@ -29,6 +37,21 @@ class VerdictComponent(Component):
         "test": "Проверка",
     }
     CROWDED_MARKET = 10
+    OUTCOME_RU = {
+        "pass": "Проходишь первый фильтр.",
+        "pass_homework": "Проходишь первый фильтр, но с домашним заданием.",
+        "improve": "Пока не проходишь: идею нужно доработать.",
+        "not_tech": "Пока не проходишь: это не технологический бизнес.",
+    }
+
+    STATE_SESSION_SUFFIX = "::interview-state"
+    STATE_SENDER_NAME = "__controller_state__"
+    MARKET_SENDER_NAME = "__market_search__"
+
+    AGENT_ON_ERROR = (
+        " Вердикт не выноси и не придумывай: скажи человеку, что произошёл "
+        "технический сбой и вердикт посчитать не удалось."
+    )
 
     HOMEWORK_BEGINNER = [
         "Найди пять живых людей из своего сегмента — не друзей и не коллег по учёбе.",
@@ -43,24 +66,15 @@ class VerdictComponent(Component):
         "test": "Проверка: придумай эксперимент на неделю и до 10 000 ₽, у которого заранее назван результат, считающийся провалом.",
     }
 
-    inputs = [
-        MessageTextInput(
-            name="market_count",
-            display_name="Competitor Count",
-            value="-1",
-            tool_mode=True,
-            info=(
-                "How many working competitors search_market found, as digits. "
-                "Use -1 if the market search was not run."
-            ),
-        ),
-    ]
+    inputs = []
 
     outputs = [
         Output(display_name="Verdict", name="verdict", method="compute_verdict"),
     ]
 
     def _flow_uuid(self):
+        # Inside a tool call Langflow hands components a placeholder graph whose
+        # flow_id is a string; the message store needs a UUID.
         from uuid import UUID
 
         fid = getattr(self.graph, "flow_id", None)
@@ -73,34 +87,31 @@ class VerdictComponent(Component):
                 return None
         return None
 
-    def _load_state(self) -> dict:
+    def _state_session_id(self) -> str:
+        return str(self.graph.session_id) + self.STATE_SESSION_SUFFIX
+
+    def _latest_record(self, sender_name: str):
+        """Return the latest JSON record by sender_name, or None if there is none."""
         import json
         from langflow.memory import get_messages
 
         try:
             msgs = get_messages(
-                session_id=self.graph.session_id,
-                sender_name="__controller_state__",
+                session_id=self._state_session_id(),
+                sender_name=sender_name,
                 order_by="timestamp",
                 order="DESC",
                 limit=1,
                 flow_id=self._flow_uuid(),
             )
-        except Exception:
-            return {}
-        if msgs:
-            try:
-                return json.loads(msgs[0].text)
-            except (json.JSONDecodeError, AttributeError):
-                return {}
-        return {}
-
-    @staticmethod
-    def _as_int(value, default):
+        except Exception as exc:
+            raise ValueError("Не удалось прочитать состояние интервью: " + str(exc) + "." + self.AGENT_ON_ERROR) from exc
+        if not msgs:
+            return None
         try:
-            return int(str(value).strip())
-        except (TypeError, ValueError):
-            return default
+            return json.loads(msgs[0].text)
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise ValueError("Состояние интервью повреждено: " + str(exc) + "." + self.AGENT_ON_ERROR) from exc
 
     def _plural(self, n, one, few, many):
         if n % 10 == 1 and n % 100 != 11:
@@ -113,38 +124,44 @@ class VerdictComponent(Component):
         if count < 0:
             return "Проверка рынка не выполнена — оцени конкурентов вручную."
         if count == 0:
-            return "Поиск не нашёл ни одного работающего аналога. Обычно это значит одно из двух: либо рынка нет, либо запрос был сформулирован неудачно."
-        word = self._plural(count, "работающий аналог", "работающих аналога", "работающих аналогов")
+            return "Поиск не нашёл ни одного сайта с похожим продуктом. Обычно это значит одно из двух: либо рынка нет, либо запрос был сформулирован неудачно."
+        word = self._plural(count, "сайт", "сайта", "сайтов")
+        found = "Поиск нашёл " + str(count) + " " + word + " с похожими продуктами"
         if count >= self.CROWDED_MARKET:
-            return "Найдено " + str(count) + " " + word + " — ниша плотная. Нужен внятный ответ, почему клиент уйдёт от них к тебе."
-        return "Найдено " + str(count) + " " + word + " — это нормальный признак живого рынка."
+            return found + " — ниша плотная. Нужен внятный ответ, почему клиент уйдёт от них к тебе."
+        return found + " — это нормальный признак живого рынка."
 
     def compute_verdict(self) -> Data:
-        state = self._load_state()
-        topics = state.get("topics") or {}
+        state = self._latest_record(self.STATE_SENDER_NAME)
+        if not state:
+            raise ValueError("Состояние интервью не найдено." + self.AGENT_ON_ERROR)
+
+        topics = state.get("topics")
+        if not isinstance(topics, dict) or any(d not in topics for d in self.DIM_ORDER):
+            raise ValueError("В состоянии интервью нет оценок по всем четырём темам." + self.AGENT_ON_ERROR)
+
+        filled = {}
+        for d in self.DIM_ORDER:
+            score = (topics.get(d) or {}).get("score")
+            if score not in (0, 1, 2):
+                raise ValueError("Недопустимая оценка по теме " + d + ": " + repr(score) + "." + self.AGENT_ON_ERROR)
+            filled[d] = int(score)
+
         entry = str(state.get("entry") or "idea").strip().lower()
         not_tech = bool(state.get("not_tech", False))
         not_tech_reason = str(state.get("not_tech_reason") or "").strip()
 
-        raw = self.market_count
-        raw = raw.text if hasattr(raw, "text") else raw
-        count = self._as_int(raw, -1)
+        market = self._latest_record(self.MARKET_SENDER_NAME) or {}
+        try:
+            count = int(market.get("count", -1))
+        except (TypeError, ValueError):
+            count = -1
 
-        filled = {
-            d: self._as_int((topics.get(d) or {}).get("score", 0), 0)
-            for d in self.DIM_ORDER
-        }
         total = sum(filled.values())
         weak = [d for d in self.DIM_ORDER if filled[d] != 2]
         note = self._market_note(count)
 
-        if not state:
-            result = {
-                "outcome": "improve", "rule": "R0",
-                "explanation": "Состояние интервью не найдено — оценки недоступны. Проверь, вызывался ли submit_answer.",
-                "weak_dims": self.DIM_ORDER, "homework": [], "market_note": note, "total": 0,
-            }
-        elif not_tech:
+        if not_tech:
             result = {
                 "outcome": "not_tech", "rule": "R1",
                 "explanation": "Задача акселератора — технологические компании, которые могут расти без пропорционального роста затрат. " + (not_tech_reason or "Здесь этого признака нет."),
@@ -178,5 +195,11 @@ class VerdictComponent(Component):
             }
 
         result["scores"] = filled
+        # The founder-facing text is composed here, so the agent only has to
+        # pass it on; a weaker model otherwise shortened it to one line.
+        parts = [self.OUTCOME_RU[result["outcome"]], result["explanation"], note]
+        if result["homework"]:
+            parts.append("Что сделать дальше:\n" + "\n".join("— " + h for h in result["homework"]))
+        result["message"] = "\n\n".join(parts)
         self.status = result
         return Data(data=result)
