@@ -1,30 +1,35 @@
 from langflow.custom import Component
 from langflow.io import MessageTextInput, SecretStrInput, StrInput, SliderInput, Output
 from langflow.schema.message import Message
-from langflow.schema import Data
 
 
 class InterviewControllerComponent(Component):
-    """Deterministic interview orchestrator (v3.2 — graph node, not a tool).
+    """Deterministic interview orchestrator, wired into the graph as a node.
 
-    v3 and v3.1 exposed this as a tool (``submit_answer``) that the agent had
-    to remember to call every turn. In testing the agent skipped it on most
-    turns and just improvised the conversation instead — the scoring never
-    ran. This version is wired directly into the graph (Chat Input -> here ->
-    Agent's system_prompt), so Langflow executes it on every turn regardless
-    of what the agent decides. The agent can no longer skip it because it
-    never had a choice to call it in the first place.
+    An earlier version exposed this logic as a tool the agent had to call on
+    every turn. In testing the agent called it on one turn in five and
+    improvised the rest, so the scoring never ran. As a graph node
+    (Chat Input -> here -> Agent's system prompt) it runs on every turn and the
+    agent has no way to skip it.
 
-    Output is one Message: static persona + rules, followed by either the
-    next-topic instruction or, once all four topics are closed, the
-    instruction to call search_market then compute_verdict.
+    The model is used for one thing only: scoring the open topics 0/1/2
+    against the rubric. Everything around that judgement is code: monotonic
+    merging (a 2 never falls back), attempt counters, the question budget,
+    the choice of the next topic and the instruction the agent receives.
+
+    State lives in a companion session ("<session_id>::interview-state"), not
+    in the chat session itself, so the agent's chat memory never sees the
+    scores. Storage failures raise instead of silently starting over.
+
+    This file is self-contained on purpose: Langflow custom components are
+    pasted one file per node, so a few helpers are repeated in
+    verdict_r1_r5.py and yandex_web_search.py.
     """
 
     display_name = "Interview Controller"
     description = (
-        "Reads the whole conversation, scores the open topics, and builds "
-        "the agent's system prompt for this turn (mirrors "
-        "core/interview.py:_read_state()+_focus())."
+        "Reads the recent conversation, scores the open topics, and builds "
+        "the agent's system prompt for this turn."
     )
     icon = "route"
     name = "InterviewController"
@@ -44,7 +49,11 @@ class InterviewControllerComponent(Component):
     }
     MAX_QUESTIONS = 10
     MAX_ATTEMPTS = 2
+    MAX_SCORE_ERRORS_IN_ROW = 2
     TRANSCRIPT_LINES = 10
+
+    STATE_SESSION_SUFFIX = "::interview-state"
+    STATE_SENDER_NAME = "__controller_state__"
 
     RUBRIC = {
         "segment": (
@@ -98,6 +107,7 @@ class InterviewControllerComponent(Component):
 
 Правила вопросов:
 - Один вопрос за реплику. Не два и не три.
+- Вопрос не длиннее 25 слов. На финальный пересказ вердикта это не распространяется.
 - Не перечисляй варианты в вопросе: не «может, какие-то программы, каталоги, сервисы?».
 - Не подсказывай признаки для сужения аудитории: ни возраст, ни город, ни размер
   компании. Вместо этого спрашивай, откуда он знает про проблему.
@@ -124,7 +134,7 @@ class InterviewControllerComponent(Component):
         StrInput(
             name="model",
             display_name="Scoring Model",
-            value="deepseek-v4-flash",
+            value="gpt-oss-120b",
             info="Model for scoring. Must support structured output (JSON schema).",
         ),
         SliderInput(
@@ -139,8 +149,10 @@ class InterviewControllerComponent(Component):
         Output(display_name="System Prompt", name="system_prompt", method="run_controller"),
     ]
 
+    # ---------------------------------------------------------------- helpers
+
     def _model_uri(self) -> str:
-        model = self.model or "deepseek-v4-flash"
+        model = self.model or "gpt-oss-120b"
         if not model.startswith(("gpt://", "ds://")):
             if "/" not in model:
                 model = model + "/latest"
@@ -148,6 +160,8 @@ class InterviewControllerComponent(Component):
         return model
 
     def _flow_uuid(self):
+        # Inside a tool call Langflow hands components a placeholder graph whose
+        # flow_id is a string; the message store needs a UUID.
         from uuid import UUID
 
         fid = getattr(self.graph, "flow_id", None)
@@ -160,11 +174,14 @@ class InterviewControllerComponent(Component):
                 return None
         return None
 
+    def _state_session_id(self) -> str:
+        return str(self.graph.session_id) + self.STATE_SESSION_SUFFIX
+
     def _fresh_state(self) -> dict:
         return {
             "current_topic": self.DIM_ORDER[0],
             "topics": {
-                d: {"score": 0, "attempts": 0, "evidence": "", "missing": ""}
+                d: {"score": 0, "attempts": 0, "missing": ""}
                 for d in self.DIM_ORDER
             },
             "questions_asked": 0,
@@ -172,66 +189,87 @@ class InterviewControllerComponent(Component):
             "entry": "idea",
             "not_tech": False,
             "not_tech_reason": "",
+            "last_score_error": "",
+            "score_errors_in_row": 0,
         }
 
-    def _load_state(self) -> dict:
+    def _session_messages(self) -> list:
+        from langflow.memory import get_messages
+
+        try:
+            return get_messages(
+                session_id=self.graph.session_id,
+                order_by="timestamp",
+                order="ASC",
+                flow_id=self._flow_uuid(),
+            ) or []
+        except Exception as exc:
+            msg = "Interview Controller could not read the chat history: " + str(exc)
+            raise RuntimeError(msg) from exc
+
+    def _load_state(self, has_bot_turn: bool) -> dict:
         import json
         from langflow.memory import get_messages
 
         try:
             msgs = get_messages(
-                session_id=self.graph.session_id,
-                sender_name="__controller_state__",
+                session_id=self._state_session_id(),
+                sender_name=self.STATE_SENDER_NAME,
                 order_by="timestamp",
                 order="DESC",
                 limit=1,
                 flow_id=self._flow_uuid(),
             )
-        except Exception:
-            msgs = []
+        except Exception as exc:
+            msg = "Interview Controller could not read its state: " + str(exc)
+            raise RuntimeError(msg) from exc
 
-        if msgs:
-            try:
-                loaded = json.loads(msgs[0].text)
-                base = self._fresh_state()
-                base.update(loaded)
-                return base
-            except (json.JSONDecodeError, AttributeError):
-                pass
-        return self._fresh_state()
+        if not msgs:
+            if has_bot_turn:
+                # The bot has already asked questions in this chat, so state must
+                # exist. Starting from zero would silently re-run the interview
+                # and could produce a verdict on scores that were never given.
+                msg = (
+                    "Interview state for this chat was not found although the "
+                    "interview is already in progress. Refusing to start over."
+                )
+                raise RuntimeError(msg)
+            return self._fresh_state()
 
-    def _save_state(self, state: dict):
+        try:
+            loaded = json.loads(msgs[0].text)
+        except (json.JSONDecodeError, TypeError) as exc:
+            msg = "Interview state for this chat is corrupted: " + str(exc)
+            raise RuntimeError(msg) from exc
+
+        state = self._fresh_state()
+        state.update(loaded)
+        for d in self.DIM_ORDER:
+            topic = self._fresh_state()["topics"][d]
+            topic.update((state.get("topics") or {}).get(d) or {})
+            state["topics"][d] = topic
+        return state
+
+    def _save_state(self, state: dict) -> None:
         import json
         from langflow.memory import store_message
-        from langflow.schema.message import Message as Msg
 
-        msg = Msg(
+        msg = Message(
             text=json.dumps(state, ensure_ascii=False),
             sender="Machine",
-            sender_name="__controller_state__",
-            session_id=self.graph.session_id,
+            sender_name=self.STATE_SENDER_NAME,
+            session_id=self._state_session_id(),
         )
         try:
             store_message(msg, flow_id=self._flow_uuid())
-        except Exception:
-            pass
+        except Exception as exc:
+            err = "Interview Controller could not save its state: " + str(exc)
+            raise RuntimeError(err) from exc
 
-    def _transcript(self, latest_answer: str) -> str:
-        from langflow.memory import get_messages
-
+    def _transcript(self, msgs: list, latest_answer: str) -> str:
         lines = []
-        try:
-            msgs = get_messages(
-                session_id=self.graph.session_id,
-                order_by="timestamp",
-                order="ASC",
-                flow_id=self._flow_uuid(),
-            )
-        except Exception:
-            msgs = []
-
         for m in msgs:
-            if m.sender_name == "__controller_state__":
+            if str(m.sender_name or "").startswith("__"):
                 continue
             text = (m.text or "").strip()
             if not text:
@@ -241,9 +279,12 @@ class InterviewControllerComponent(Component):
             elif m.sender == "User":
                 lines.append("Человек: " + text)
 
-        answer = (latest_answer or "").strip()
-        if answer and not any(answer in ln for ln in lines):
-            lines.append("Человек: " + answer)
+        # Chat Input normally stores the message before this node runs. Add the
+        # latest answer only if it is not already the last line. (A substring
+        # check here used to drop short answers such as «да» or a single number.)
+        latest_line = "Человек: " + (latest_answer or "").strip()
+        if latest_answer and (not lines or lines[-1] != latest_line):
+            lines.append(latest_line)
 
         return "\n".join(lines[-self.TRANSCRIPT_LINES:])
 
@@ -272,10 +313,9 @@ class InterviewControllerComponent(Component):
                             "type": "object",
                             "properties": {
                                 "score": {"type": "integer", "enum": [0, 1, 2]},
-                                "evidence": {"type": "string"},
                                 "missing": {"type": "string"},
                             },
-                            "required": ["score", "evidence", "missing"],
+                            "required": ["score", "missing"],
                             "additionalProperties": False,
                         }
                         for d in dims
@@ -298,8 +338,7 @@ class InterviewControllerComponent(Component):
             "entry — с чем пришёл: nothing (идеи нет), idea (названа, ничего не "
             "построено), built (есть прототип, продукт, пользователи, продажи).\n"
             "not_tech — true, только если это явно НЕ технологический бизнес.\n"
-            "evidence — одна фраза, почему такая оценка.\n"
-            "missing — чего не хватает до 2, одной фразой; при 2 — пустая строка."
+            "missing — чего не хватает до 2, не длиннее 10 слов; при 2 — пустая строка."
         )
 
         last_err = ""
@@ -323,46 +362,118 @@ class InterviewControllerComponent(Component):
                         }
                     },
                 )
-                return json.loads(resp.output_text or "{}")
+                parsed = json.loads(resp.output_text or "")
+                if not isinstance(parsed.get("topics"), dict):
+                    raise ValueError("no topics in scorer output")
+                return parsed
             except Exception as exc:
-                last_err = str(exc)
+                last_err = str(exc)[:300]
 
-        return {"_error": last_err, "topics": {}}
+        return {"_error": last_err or "unknown scoring error"}
+
+    # ------------------------------------------------------------ prompt text
+
+    def _header(self, topics: dict) -> str:
+        asked = sum(topics[d]["attempts"] for d in self.DIM_ORDER)
+        closed = [self.DIM_TITLE_RU[d] for d in self.DIM_ORDER if topics[d]["score"] == 2]
+        return (
+            "\nСЛУЖЕБНО: засчитано ответов " + str(asked) + " из "
+            + str(self.MAX_QUESTIONS) + ". Уже закрыто: " + (", ".join(closed) or "ничего") + ".\n"
+        )
+
+    def _ask_block(self, topics: dict, dim: str, note: str = "") -> str:
+        return (
+            self._header(topics) + note
+            + "СЕЙЧАС СПРАШИВАЙ ТОЛЬКО ПРО ЭТО — " + self.DIM_TITLE_RU[dim] + ".\n"
+            "Что нужно вытянуть: " + self.DIG[dim] + ".\n"
+            "Задай один вопрос по этой теме."
+        )
+
+    def _retry_block(self, topics: dict, dim: str) -> str:
+        missing = topics[dim]["missing"]
+        return (
+            self._header(topics)
+            + "СЕЙЧАС СПРАШИВАЙ ТОЛЬКО ПРО ЭТО — " + self.DIM_TITLE_RU[dim] + ".\n"
+            "Тема ещё не закрыта" + (". Не хватает: " + missing if missing else "") + ".\n"
+            "Задай второй вопрос по ТОЙ ЖЕ теме с другой стороны: про конкретный "
+            "случай, про источник знания, про числа. Не повторяй свой прошлый "
+            "вопрос дословно."
+        )
+
+    def _final_block(self, state: dict) -> str:
+        return (
+            "\nИнтервью завершено, вопросов больше не задавай.\n"
+            "1) Вызови search_market с запросом по идее и аудитории: "
+            + (state["idea"] or "идея не названа") + ".\n"
+            "2) Вызови compute_verdict. Аргументы не нужны: оценки и результат "
+            "поиска он берёт из состояния сам.\n"
+            "3) Перескажи человеку результат compute_verdict, не меняя сути. "
+            "Если compute_verdict вернул ошибку, вердикт не выноси: скажи, что "
+            "произошёл технический сбой и вердикт посчитать не удалось."
+        )
+
+    def _failure_block(self) -> str:
+        return (
+            "\nСЛУЖЕБНО: оценка ответов сейчас недоступна из-за технического сбоя.\n"
+            "Вопросов больше не задавай и вердикт не выноси, инструменты не вызывай.\n"
+            "Скажи человеку одной-двумя фразами, что произошёл технический сбой и "
+            "интервью нужно продолжить чуть позже."
+        )
+
+    # ---------------------------------------------------------------- main
 
     def run_controller(self) -> Message:
-        state = self._load_state()
-
         raw = self.answer
-        answer = raw.text if hasattr(raw, "text") else str(raw)
+        answer = raw.text if hasattr(raw, "text") else str(raw or "")
         answer = (answer or "").strip()
 
+        msgs = self._session_messages()
+        has_bot_turn = any(
+            m.sender == "Machine" and not str(m.sender_name or "").startswith("__")
+            for m in msgs
+        )
+        state = self._load_state(has_bot_turn)
         topics = state["topics"]
         topic = state["current_topic"] or self.DIM_ORDER[0]
 
         if answer:
-            state["questions_asked"] += 1
-            topics[topic]["attempts"] += 1
-
+            # The founder's opening message is the idea itself, not an answer
+            # to a question, so it is scored but does not use up an attempt.
+            counts_as_answer = has_bot_turn
             open_dims = [d for d in self.DIM_ORDER if topics[d]["score"] < 2]
-            if open_dims:
-                transcript = self._transcript(answer)
-                fresh = self._score_open(transcript, open_dims)
-                fresh_topics = fresh.get("topics") or {}
+            fresh = self._score_open(self._transcript(msgs, answer), open_dims) if open_dims else {}
 
+            if fresh.get("_error"):
+                # Do not charge the founder for an outage: the answer stays in
+                # the transcript and is scored on the next successful turn.
+                state["last_score_error"] = fresh["_error"]
+                state["score_errors_in_row"] = int(state.get("score_errors_in_row") or 0) + 1
+            else:
+                state["last_score_error"] = ""
+                state["score_errors_in_row"] = 0
+                if counts_as_answer:
+                    state["questions_asked"] += 1
+                    topics[topic]["attempts"] += 1
+
+                fresh_topics = fresh.get("topics") or {}
                 for d in open_dims:
                     item = fresh_topics.get(d) or {}
                     new_score = item.get("score")
-                    if new_score in (0, 1, 2):
-                        if int(new_score) > int(topics[d]["score"]):
-                            topics[d]["score"] = int(new_score)
-                        topics[d]["evidence"] = str(item.get("evidence", ""))
-                        topics[d]["missing"] = str(item.get("missing", ""))
+                    if new_score not in (0, 1, 2):
+                        continue
+                    new_score = int(new_score)
+                    # Monotonic merge: keep the best score, and keep the
+                    # "missing" note that belongs to that score.
+                    if new_score >= int(topics[d]["score"]):
+                        topics[d]["score"] = new_score
+                        topics[d]["missing"] = "" if new_score == 2 else str(item.get("missing", ""))
 
                 if fresh.get("idea"):
                     state["idea"] = str(fresh["idea"])
                 if fresh.get("entry") in ("nothing", "idea", "built"):
                     state["entry"] = fresh["entry"]
-                state["not_tech"] = bool(fresh.get("not_tech", state.get("not_tech", False)))
+                if "not_tech" in fresh:
+                    state["not_tech"] = bool(fresh["not_tech"])
                 if fresh.get("not_tech_reason"):
                     state["not_tech_reason"] = str(fresh["not_tech_reason"])
 
@@ -372,64 +483,41 @@ class InterviewControllerComponent(Component):
                     return d
             return None
 
-        nxt_for_check = _next_topic()
+        nxt = _next_topic()
         total_attempts = sum(topics[d]["attempts"] for d in self.DIM_ORDER)
         complete = (
             all(topics[d]["score"] == 2 for d in self.DIM_ORDER)
             or total_attempts >= self.MAX_QUESTIONS
-            or nxt_for_check is None
+            or nxt is None
         )
+        failed = int(state.get("score_errors_in_row") or 0) >= self.MAX_SCORE_ERRORS_IN_ROW
 
-        if complete:
-            block = (
-                "\nИнтервью завершено, вопросов больше не задавай.\n"
-                "1) Вызови search_market с запросом по идее и аудитории: "
-                + (state["idea"] or "идея не названа") + ".\n"
-                "2) Вызови compute_verdict и передай ТОЛЬКО market_count — "
-                "число аналогов из search_market, цифрами. Оценки и остальное "
-                "он возьмёт из состояния сам.\n"
-                "3) Перескажи человеку результат compute_verdict, не меняя сути."
-            )
-            state["current_topic"] = topic
-        elif topics[topic]["score"] == 2:
-            nxt = _next_topic()
-            state["current_topic"] = nxt
-            closed = [self.DIM_TITLE_RU[d] for d in self.DIM_ORDER if topics[d]["score"] == 2]
-            block = (
-                "\nСЛУЖЕБНО: задано попыток " + str(total_attempts) + " из "
-                + str(self.MAX_QUESTIONS) + ". Уже закрыто: " + (", ".join(closed) or "ничего") + ".\n"
-                "СЕЙЧАС СПРАШИВАЙ ТОЛЬКО ПРО ЭТО — " + self.DIM_TITLE_RU[nxt] + ".\n"
-                "Что нужно вытянуть: " + self.DIG[nxt] + ".\n"
-                "Задай один вопрос по этой теме."
-            )
-        elif topics[topic]["attempts"] < self.MAX_ATTEMPTS:
-            closed = [self.DIM_TITLE_RU[d] for d in self.DIM_ORDER if topics[d]["score"] == 2]
-            missing = topics[topic]["missing"]
-            block = (
-                "\nСЛУЖЕБНО: задано попыток " + str(total_attempts) + " из "
-                + str(self.MAX_QUESTIONS) + ". Уже закрыто: " + (", ".join(closed) or "ничего") + ".\n"
-                "СЕЙЧАС СПРАШИВАЙ ТОЛЬКО ПРО ЭТО — " + self.DIM_TITLE_RU[topic] + ".\n"
-                "Тема ещё не закрыта" + (". Не хватает: " + missing if missing else "") + ".\n"
-                "Задай второй вопрос по ТОЙ ЖЕ теме с другой стороны: про конкретный "
-                "случай, про источник знания, про числа. Не повторяй свой прошлый "
-                "вопрос дословно."
-            )
-        else:
-            nxt = _next_topic()
-            state["current_topic"] = nxt
-            closed = [self.DIM_TITLE_RU[d] for d in self.DIM_ORDER if topics[d]["score"] == 2]
-            block = (
-                "\nСЛУЖЕБНО: задано попыток " + str(total_attempts) + " из "
-                + str(self.MAX_QUESTIONS) + ". Уже закрыто: " + (", ".join(closed) or "ничего") + ".\n"
+        if failed:
+            block = self._failure_block()
+        elif complete:
+            block = self._final_block(state)
+        elif nxt == topic:
+            if topics[topic]["attempts"] > 0:
+                block = self._retry_block(topics, topic)
+            else:
+                block = self._ask_block(topics, topic)
+        elif topics[topic]["score"] < 2 and topics[topic]["attempts"] >= self.MAX_ATTEMPTS:
+            note = (
                 "Тема «" + self.DIM_TITLE_RU[topic] + "» не закрыта за две попытки. "
                 "Долбить бессмысленно.\n"
-                "СЕЙЧАС СПРАШИВАЙ ТОЛЬКО ПРО ЭТО — " + self.DIM_TITLE_RU[nxt] + ".\n"
-                "Что нужно вытянуть: " + self.DIG[nxt] + ".\n"
-                "Задай один вопрос по этой теме."
             )
+            block = self._ask_block(topics, nxt, note)
+        else:
+            block = self._ask_block(topics, nxt)
+
+        if not complete:
+            state["current_topic"] = nxt
 
         self._save_state(state)
-        result_text = self.STATIC_PERSONA + block
-        self.status = {"complete": complete, "topic": state["current_topic"],
-                       "scores": {d: topics[d]["score"] for d in self.DIM_ORDER}}
-        return Message(text=result_text)
+        self.status = {
+            "complete": complete,
+            "topic": state["current_topic"],
+            "scores": {d: topics[d]["score"] for d in self.DIM_ORDER},
+            "last_score_error": state["last_score_error"],
+        }
+        return Message(text=self.STATIC_PERSONA + block)

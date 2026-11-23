@@ -12,7 +12,7 @@ class YandexChatModelComponent(Component):
     inputs = [
         SecretStrInput(name="api_key", display_name="Yandex API Key", required=True),
         StrInput(name="folder_id", display_name="Yandex Folder ID", required=True),
-        StrInput(name="model", display_name="Model", value="yandexgpt/latest"),
+        StrInput(name="model", display_name="Model", value="deepseek-v4-flash"),
         SliderInput(name="temperature", display_name="Temperature", value=0.4, range_spec={"min": 0.0, "max": 1.0, "step": 0.01}),
     ]
 
@@ -23,7 +23,7 @@ class YandexChatModelComponent(Component):
     def build_model(self) -> LanguageModel:
         from langchain_openai import ChatOpenAI
 
-        model = self.model or "yandexgpt/latest"
+        model = self.model or "deepseek-v4-flash"
         if not model.startswith(("gpt://", "ds://")):
             if "/" not in model:
                 model = model + "/latest"
